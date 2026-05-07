@@ -29,6 +29,7 @@ Commands
 | Command | Description |
 | :--- | :--- |
 | `/scramble [puzzle]` | Generates a scramble and visual for the specified puzzle. |
+| `/sessions [puzzle] [count]` | Generates multiple scrambles of the same NxN puzzle (max count varies by size: 10 for 2x2–4x4, 7 for 5x5, 6 for 6x6, 5 for 7x7). |
 | `/stopwatch [puzzle]` | Launches an interactive timer to record a new solve. |
 | `/time [puzzle]` | Displays your 15 most recent solves and current averages for a puzzle. |
 | `/delete_time [id]` | Removes a specific solve from your history using its TimeID. |

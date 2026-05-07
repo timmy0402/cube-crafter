@@ -37,6 +37,43 @@ PUZZLE_CHOICES = [
     app_commands.Choice(name="clock", value="CLOCK"),
 ]
 
+SCRAMBLE_API_CHOICES = [                                                                                                                                                                                                                                                                            
+    app_commands.Choice(name="2x2", value="TWO"),                                                                                                                                                                                                                                                 
+    app_commands.Choice(name="3x3", value="THREE"),                                                                                                                                                                                                                                               
+    app_commands.Choice(name="4x4", value="FOUR"),                                                                                                                                                                                                                                                  
+    app_commands.Choice(name="5x5", value="FIVE"),                                                                                                                                                                                                                                                  
+    app_commands.Choice(name="6x6", value="SIX"),                                                                                                                                                                                                                                                   
+    app_commands.Choice(name="7x7", value="SEVEN"),                                                                                                                                                                                                                                                 
+    app_commands.Choice(name="pyraminx", value="PYRA"),                                                                                                                                                                                                                                             
+    app_commands.Choice(name="square1", value="SQ1"),                                                                                                                                                                                                                                        
+    app_commands.Choice(name="megaminx", value="MEGA"),                                                                                                                                                                                                                                      
+    app_commands.Choice(name="skewb", value="SKEWB"),                                                                                                                                                                                                                                        
+    app_commands.Choice(name="clock", value="CLOCK"),                                                                                                                                                                                                                                        
+]        
+
+# Subset for /sessions: NxN only — other puzzles produce scrambles too long
+# to fit multiple in a single Discord message.
+SCRAMBLE_API_NXN_CHOICES = [
+    app_commands.Choice(name="2x2", value="TWO"),
+    app_commands.Choice(name="3x3", value="THREE"),
+    app_commands.Choice(name="4x4", value="FOUR"),
+    app_commands.Choice(name="5x5", value="FIVE"),
+    app_commands.Choice(name="6x6", value="SIX"),
+    app_commands.Choice(name="7x7", value="SEVEN"),
+]
+
+# Per-puzzle scramble count caps for /sessions. Larger cubes have longer
+# scramble strings, so fewer fit inside Discord's 2000-char message limit.
+SESSIONS_MAX_COUNT = {
+    "TWO": 10,
+    "THREE": 10,
+    "FOUR": 10,
+    "FIVE": 7,
+    "SIX": 6,
+    "SEVEN": 5,
+}
+SESSIONS_ABS_MAX = max(SESSIONS_MAX_COUNT.values())
+
 
 class RubiksCommands(commands.Cog):
     """
@@ -103,22 +140,56 @@ class RubiksCommands(commands.Cog):
             out_buffer.seek(0)
             return out_buffer
 
+    @app_commands.command(name="sessions", description="Generate multiple scrambles of the same puzzle")
+    @app_commands.describe(
+        puzzle="Choose the puzzle type (NxN only)",
+        count="Number of scrambles (max varies by puzzle: 10 for 2-4x4, 7 for 5x5, 6 for 6x6, 5 for 7x7)",
+    )
+    @app_commands.choices(puzzle=SCRAMBLE_API_NXN_CHOICES)
+    async def sessions(
+        self,
+        interaction: discord.Interaction,
+        puzzle: str,
+        count: app_commands.Range[int, 1, SESSIONS_ABS_MAX],
+    ) -> None:
+        """
+        Generates multiple scrambles for the selected puzzle.
+        """
+        if interaction.response.is_done():
+            logger.warning("Interaction already responded to.")
+        else:
+            await interaction.response.defer()
+
+            # Log command usage
+            self._log_command_usage("sessions")
+
+            # Per-puzzle cap: bigger cubes => longer scrambles => fewer fit per message
+            max_count = SESSIONS_MAX_COUNT[puzzle]
+            if count > max_count:
+                await interaction.followup.send(
+                    f"Maximum is **{max_count}** scrambles for this puzzle. You requested {count}."
+                )
+                return
+
+            # Call external Scrambler API
+            url = "https://scrambler-api-apim.azure-api.net/scrambler-api/GetRelay"
+            params = {"puzzle": puzzle, "count": count}
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as response:
+                    if response.status != 200:
+                        await interaction.followup.send("Failed to retrieve scramble. Please try again later.")
+                        logger.error(f"Scrambler API error: {response.status} - {await response.text()}")
+                        return
+
+                    response_json = await response.json()
+            scrambles = "\n\n".join(response_json['scrambles'])
+            await interaction.followup.send(scrambles)
+
     @app_commands.command(name="scramble", description="Generate a Rubik's Cube scramble")
     @app_commands.describe(puzzle="Choose the scramble type")
     @app_commands.choices(
-        puzzle=[
-            app_commands.Choice(name="2x2", value="TWO"),
-            app_commands.Choice(name="3x3", value="THREE"),
-            app_commands.Choice(name="4x4", value="FOUR"),
-            app_commands.Choice(name="5x5", value="FIVE"),
-            app_commands.Choice(name="6x6", value="SIX"),
-            app_commands.Choice(name="7x7", value="SEVEN"),
-            app_commands.Choice(name="pyraminx", value="PYRA"),
-            app_commands.Choice(name="square1", value="SQ1"),
-            app_commands.Choice(name="megaminx", value="MEGA"),
-            app_commands.Choice(name="skewb", value="SKEWB"),
-            app_commands.Choice(name="clock", value="CLOCK"),
-        ]
+        puzzle=SCRAMBLE_API_CHOICES
     )
     async def scramble(self, interaction: discord.Interaction, puzzle: str) -> None:
         """
