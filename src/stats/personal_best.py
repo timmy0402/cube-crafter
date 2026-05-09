@@ -103,6 +103,9 @@ def update_user_average_best(db_manager: DatabaseManager, user_id: int, puzzle_t
     return (updated_ao5, updated_ao12)
 
 def get_user_pbs(db_manager: DatabaseManager, user_id: int, puzzle_type: str = "3x3") -> dict:
+    """
+    Get user best single, average 5, 12 of a given puzzle
+    """
     db_manager.cursor.execute(
         "SELECT BestSingle, BestAo5, BestAo12 FROM UserStats WHERE UserID=? AND PuzzleType=?", (user_id, puzzle_type))
     row = db_manager.cursor.fetchone()

@@ -37,10 +37,23 @@ class RubiksBot(commands.Bot):
         Setup hook called before the bot starts.
         Registers cogs, syncs commands, and starts background loops.
         """
-        # Add the Cog
-        from cogs.commands import RubiksCommands
+        # Add the Cogs
+        from cogs.scramble_commands import ScrambleCommands
+        from cogs.algorithm_commands import AlgorithmCommands
+        from cogs.solve_commands import SolveCommands
+        from cogs.daily_commands import DailyCommands
+        from cogs.reminder_commands import ReminderCommands
+        from cogs.meta_commands import MetaCommands
 
-        await self.add_cog(RubiksCommands(self))
+        for cog_cls in (
+            ScrambleCommands,
+            AlgorithmCommands,
+            SolveCommands,
+            DailyCommands,
+            ReminderCommands,
+            MetaCommands,
+        ):
+            await self.add_cog(cog_cls(self))
         # Sync application commands with Discord
         if os.getenv("ENV", "").upper() == "PROD":
             await self.tree.sync()

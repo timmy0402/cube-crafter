@@ -2,21 +2,7 @@ import base64
 import io
 import pytest
 from PIL import Image
-from cogs.commands import RubiksCommands
-
-
-@pytest.fixture
-def processor():
-    """Create a RubiksCommands instance with minimal mocking for image tests."""
-
-    class FakeBot:
-        db_manager = None
-
-    cmd = object.__new__(RubiksCommands)
-    cmd.bot = FakeBot()
-    cmd.blob_service_client = None
-    cmd.container = None
-    return cmd
+from cogs._helpers import process_scramble_image
 
 
 @pytest.fixture
@@ -29,23 +15,23 @@ def sample_b64_png():
 
 
 class TestProcessScrambleImage:
-    """Tests for _process_scramble_image helper."""
+    """Tests for process_scramble_image helper."""
 
-    def test_returns_bytesio_at_position_zero(self, processor, sample_b64_png):
-        result = processor._process_scramble_image(sample_b64_png)
+    def test_returns_bytesio_at_position_zero(self, sample_b64_png):
+        result = process_scramble_image(sample_b64_png)
         assert isinstance(result, io.BytesIO)
         assert result.tell() == 0
 
-    def test_output_is_valid_png(self, processor, sample_b64_png):
-        result = processor._process_scramble_image(sample_b64_png)
+    def test_output_is_valid_png(self, sample_b64_png):
+        result = process_scramble_image(sample_b64_png)
         img = Image.open(result)
         assert img.format == "PNG"
 
-    def test_output_is_resized_to_500x300(self, processor, sample_b64_png):
-        result = processor._process_scramble_image(sample_b64_png)
+    def test_output_is_resized_to_500x300(self, sample_b64_png):
+        result = process_scramble_image(sample_b64_png)
         img = Image.open(result)
         assert img.size == (500, 300)
 
-    def test_invalid_base64_raises(self, processor):
+    def test_invalid_base64_raises(self):
         with pytest.raises(Exception):
-            processor._process_scramble_image("not-valid-base64!!!")
+            process_scramble_image("not-valid-base64!!!")

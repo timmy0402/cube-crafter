@@ -184,6 +184,7 @@ class TimerView(discord.ui.View):
         dnf_btn.callback = self.dnf_callback
         self.add_item(dnf_btn)
 
+        # Daily deletetion not allowed
         if not self.is_daily:
             delete_btn = discord.ui.Button(label="Delete", style=discord.ButtonStyle.danger)
             delete_btn.callback = self.delete_callback
