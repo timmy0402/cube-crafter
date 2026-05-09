@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 from views.algorithms import AlgorithmsView
 from views.timer import TimerView
+from views.reminder import RemindMeView, TimezoneSelectView
 from azure.storage.blob import BlobServiceClient
 from stats import get_user_pbs, calculate_wca_avg, recalculate_user_pbs
 import os
@@ -543,6 +544,15 @@ class RubiksCommands(commands.Cog):
             message = await interaction.original_response()
             view.message = message
 
+            try:
+                await interaction.followup.send(
+                    "Want a daily reminder? Click below to set a time and timezone.",
+                    view=RemindMeView(self.bot),
+                    ephemeral=True,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send reminder opt-in followup: {e}")
+
             await view.wait()
             await view.disable_all_items()
         except Exception as e:
@@ -784,6 +794,128 @@ class RubiksCommands(commands.Cog):
             logger.error(f"Adjust time error: {e}")
             await interaction.followup.send("Error processing adjustment.")
 
+    reminder = app_commands.Group(
+        name="reminder",
+        description="Manage your daily reminder DM",
+    )
+
+    @reminder.command(
+        name="set",
+        description="Set or update your daily reminder time and timezone",
+    )
+    async def reminder_set(self, interaction: discord.Interaction) -> None:
+        """
+        Starts the reminder setup flow with a timezone Select. The Select
+        callback then opens a time-entry modal (or a custom-tz modal for 'Other').
+
+        Input: interaction (discord.Interaction) - The slash command interaction.
+        Output: None
+        """
+        self._log_command_usage("reminder_set")
+        await interaction.response.send_message(
+            "Pick your timezone:",
+            view=TimezoneSelectView(self.bot),
+            ephemeral=True,
+        )
+
+    @reminder.command(
+        name="disable",
+        description="Turn off your daily reminder",
+    )
+    async def reminder_disable(self, interaction: discord.Interaction) -> None:
+        """
+        Marks the user's reminder inactive. No-op if the user has no reminder.
+
+        Input: interaction (discord.Interaction) - The slash command interaction.
+        Output: None
+        """
+        await interaction.response.defer(ephemeral=True)
+        self._log_command_usage("reminder_disable")
+        try:
+            db_id = self._get_db_user_id(interaction.user.id)
+            if db_id is None:
+                await interaction.followup.send(
+                    "You don't have a reminder set yet. Use `/reminder set` to create one.",
+                    ephemeral=True,
+                )
+                return
+            self.bot.db_manager.cursor.execute(
+                "UPDATE DailyReminders SET IsActive=0, UpdatedAt=GETUTCDATE() "
+                "WHERE UserID=?",
+                (db_id,),
+            )
+            affected = self.bot.db_manager.cursor.rowcount
+            self.bot.db_manager.connection.commit()
+        except Exception as e:
+            logger.error(f"reminder_disable failed for {interaction.user.id}: {e}")
+            await interaction.followup.send(
+                "Couldn't disable your reminder. Please try again later.",
+                ephemeral=True,
+            )
+            return
+        if affected:
+            await interaction.followup.send(
+                "Your daily reminder is now off. Use `/reminder set` to turn it back on.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(
+                "You don't have a reminder set yet. Use `/reminder set` to create one.",
+                ephemeral=True,
+            )
+
+    @reminder.command(
+        name="show",
+        description="Show your current reminder settings",
+    )
+    async def reminder_show(self, interaction: discord.Interaction) -> None:
+        """
+        Displays the user's current reminder configuration.
+
+        Input: interaction (discord.Interaction) - The slash command interaction.
+        Output: None
+        """
+        await interaction.response.defer(ephemeral=True)
+        self._log_command_usage("reminder_show")
+        try:
+            db_id = self._get_db_user_id(interaction.user.id)
+            if db_id is None:
+                await interaction.followup.send(
+                    "No reminder set. Use `/reminder set` to create one.",
+                    ephemeral=True,
+                )
+                return
+            self.bot.db_manager.cursor.execute(
+                "SELECT ReminderTime, Timezone, IsActive "
+                "FROM DailyReminders WHERE UserID=?",
+                (db_id,),
+            )
+            row = self.bot.db_manager.cursor.fetchone()
+        except Exception as e:
+            logger.error(f"reminder_show failed for {interaction.user.id}: {e}")
+            await interaction.followup.send(
+                "Couldn't fetch your reminder. Please try again later.",
+                ephemeral=True,
+            )
+            return
+
+        if row is None:
+            await interaction.followup.send(
+                "No reminder set. Use `/reminder set` to create one.",
+                ephemeral=True,
+            )
+            return
+
+        reminder_time, timezone, is_active = row
+        status = "On" if is_active else "Off"
+        await interaction.followup.send(
+            f"**Daily reminder**\n"
+            f"Time: `{reminder_time}`\n"
+            f"Timezone: `{timezone}`\n"
+            f"Status: **{status}**",
+            ephemeral=True,
+        )
+
     @app_commands.command(name="help", description="View all available commands")
     async def help(self, interaction: discord.Interaction) -> None:
         """
@@ -798,6 +930,7 @@ class RubiksCommands(commands.Cog):
             color=discord.Color.blue()
         )
         embed.add_field(name="/scramble", value="Generate a scramble for various puzzles", inline=False)
+        embed.add_field(name="/sessions", value="Generate multiple scrambles of the same puzzles", inline=False)
         embed.add_field(name="/stopwatch", value="Interactive timer to record your solves", inline=False)
         embed.add_field(name="/time", value="View your recent times and WCA averages", inline=False)
         embed.add_field(name="/adjust_time", value="Add 2 seconds penalty or flag as DNF")
@@ -806,6 +939,7 @@ class RubiksCommands(commands.Cog):
         embed.add_field(name="/oll / /pll", value="Reference library for CFOP algorithms", inline=False)
         embed.add_field(name="/daily", value="Start your daily section with timer", inline=False)
         embed.add_field(name="/leaderboard", value="Get your server daily leaderboard", inline=False)
+        embed.add_field(name="/reminder set / disable / show", value="Opt in to a daily reminder DM at your chosen time + timezone", inline=False)
 
         await interaction.followup.send(embed=embed)
 

@@ -9,6 +9,7 @@ import logging
 import datetime
 import asyncio
 import itertools
+import zoneinfo
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,11 @@ class RubiksBot(commands.Bot):
         if not self.daily_scramble_task.is_running():
             logger.info("Starting daily scramble task...")
             self.daily_scramble_task.start()
-        
+
+        if not self.daily_reminder_task.is_running():
+            logger.info("Starting daily reminder task...")
+            self.daily_reminder_task.start()
+
     async def on_ready(self) -> None:
         """
         Triggered when the bot is fully connected and ready.
@@ -241,3 +246,109 @@ class RubiksBot(commands.Bot):
         Generates a daily scramble for 3x3 at 00:00 UTC.
         """
         await self.check_and_generate_daily_scramble()
+
+    async def _send_reminder_dm(self, discord_id: int) -> None:
+        """
+        Sends the daily reminder DM to a user.
+
+        Best-effort: silently swallows Forbidden (DMs blocked) and other HTTP
+        errors so the reminder loop keeps moving.
+
+        Input:
+            discord_id (int): The Discord user ID to DM.
+        Output:
+            None
+        """
+        try:
+            user = await self.fetch_user(discord_id)
+            await user.send(
+                "⏰ Time for your daily Rubik's scramble! "
+                "Run `/daily` in any server with the bot. \n Please give us a vote or review on https://top.gg/bot/1197268536918278236"
+            )
+        except discord.Forbidden:
+            logger.info(f"DMs blocked for {discord_id}; skipping reminder.")
+        except discord.HTTPException as e:
+            logger.warning(f"Reminder DM failed for {discord_id}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected reminder DM failure for {discord_id}: {e}")
+
+    @tasks.loop(minutes=1)
+    async def daily_reminder_task(self) -> None:
+        """
+        Per-minute loop that sends daily reminder DMs to opted-in users.
+
+        For each active reminder, computes the user's local time, fires a DM
+        once their preferred time is reached, and skips if they've already
+        completed today's daily. LastSentDate is keyed off the user's local
+        date, not UTC, so each user gets exactly one reminder per local day.
+        """
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        try:
+            self.db_manager.cursor.execute(
+                "SELECT r.ReminderID, r.UserID, u.DiscordID, r.ReminderTime, "
+                "r.Timezone, r.LastSentDate "
+                "FROM DailyReminders r JOIN Users u ON u.UserID = r.UserID "
+                "WHERE r.IsActive = 1"
+            )
+            rows = self.db_manager.cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Reminder query failed: {e}")
+            return
+
+        for reminder_id, db_uid, discord_id, hhmm, tz_name, last_sent in rows:
+            try:
+                tz = zoneinfo.ZoneInfo(tz_name)
+            except zoneinfo.ZoneInfoNotFoundError:
+                logger.warning(
+                    f"Reminder {reminder_id} has invalid timezone {tz_name}; skipping."
+                )
+                continue
+            # getting local time in the user timezone
+            local_now = now_utc.astimezone(tz)
+            local_today = local_now.date()
+            if last_sent == local_today: # time zone roll back, already sent
+                continue
+
+            try:
+                target_h, target_m = (int(p) for p in hhmm.split(":"))
+            except ValueError:
+                logger.warning(
+                    f"Reminder {reminder_id} has malformed time {hhmm}; skipping."
+                )
+                continue
+
+            if (local_now.hour, local_now.minute) < (target_h, target_m): # time already passed
+                continue
+
+            # checking if user already solve the daily
+            try:
+                self.db_manager.cursor.execute(
+                    "SELECT 1 FROM DailySolves WHERE UserID=? AND SolveDate=?",
+                    (db_uid, local_today),
+                )
+                already_solved = self.db_manager.cursor.fetchone()
+            except Exception as e:
+                logger.error(f"DailySolves lookup failed for {db_uid}: {e}")
+                continue
+
+            if not already_solved:
+                await self._send_reminder_dm(discord_id)
+            # set last sent
+            try:
+                self.db_manager.cursor.execute(
+                    "UPDATE DailyReminders SET LastSentDate=?, "
+                    "UpdatedAt=GETUTCDATE() WHERE ReminderID=?",
+                    (local_today, reminder_id),
+                )
+                self.db_manager.connection.commit()
+            except Exception as e:
+                logger.error(
+                    f"Failed to mark reminder {reminder_id} as sent: {e}"
+                )
+
+    @daily_reminder_task.before_loop
+    async def before_daily_reminder_task(self) -> None:
+        """
+        Wait until the bot is fully connected before starting the reminder loop.
+        """
+        await self.wait_until_ready()
