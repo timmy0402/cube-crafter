@@ -6,7 +6,7 @@
 
 **Cube Crafter** is a high-performance Discord bot designed for the cubing community. It provides official WCA scrambles, visual cube representations, and a robust personal timing system directly within your Discord server.
 
-[**Visit Official Website**](https://cube-crafter-site.vercel.app/) | [**Invite Bot**](https://discord.com/api/oauth2/authorize?client_id=1197268536918278236&permissions=2147483648&scope=bot%20applications.commands)
+[**Visit Official Website**](https://cubecrafter.app) | [**Invite Bot**](https://discord.com/api/oauth2/authorize?client_id=1197268536918278236&permissions=2147483648&scope=bot%20applications.commands)
 
 ---
 
@@ -19,7 +19,7 @@
 - **WCA Averages:** Automatically calculates **Average of 5 (Ao5)** and **Average of 12 (Ao12)** according to WCA standards (removing best/worst solves).
 - **Per-Puzzle Tracking:** Keeps your history organized by puzzle type with a 15-entry limit per puzzle to keep your data relevant.
 - **Algorithm Library:** Access OLL and PLL algorithm guides with visual aids.
-- **Daily Competition:** Compete with friends in your sever with unique daily scramble.
+- **Daily Competition:** Compete with friends in your sever with unique daily scramble. Reminder also can be opt-in
 
 ---
 
@@ -36,6 +36,7 @@ Commands
 | `/oll [group]` | View OLL algorithms with visual guides and pagination. |
 | `/pll [group]` | View PLL algorithms with visual guides and pagination. |
 | `/daily` | View the daily scramble with timer. |
+| `/reminder` | Opt-in to daily reminder on your timezone. |
 | `/leaderboard` | View the ranking of daily solve in current server. |
 | `/invite` | Generates invite link. |
 

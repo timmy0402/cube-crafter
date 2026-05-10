@@ -108,6 +108,48 @@ class RubiksBot(commands.Bot):
         except Exception as e:
             logger.error(f"Failed to initialize database connection: {e}")
 
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """
+        Triggered when joining a server. Sends a welcome embed inviting the
+        guild to the support server.
+
+        Input:
+            guild (discord.Guild): The guild the bot just joined.
+        Output:
+            None
+        """
+        logger.info(f"Joined guild {guild.id} ({guild.name})")
+        server_link = "https://discord.com/invite/sq4Qa9vavc"
+        embed = discord.Embed(
+            title="Welcome to Cube Crafter",
+            description=(
+                f"Thank you for using Cube Crafter — use /help to learn more "
+                f"and join our support [server]({server_link}) if you need more assistance."
+            ),
+        )
+        # finding channel that message can be send
+        channel = guild.system_channel
+        if channel is None or not channel.permissions_for(guild.me).send_messages:
+            channel = next(
+                (
+                    c
+                    for c in guild.text_channels
+                    if c.permissions_for(guild.me).send_messages
+                    and c.permissions_for(guild.me).embed_links
+                ),
+                None,
+            )
+        if channel is None:
+            logger.info(f"No writable channel in guild {guild.id}; skipping welcome.")
+            return
+        try:
+            await channel.send(embed=embed)
+        except discord.Forbidden:
+            logger.info(f"Welcome send forbidden in guild {guild.id}.")
+        except discord.HTTPException as e:
+            logger.warning(f"Welcome send failed for guild {guild.id}: {e}")
+
+
     async def on_disconnect(self) -> None:
         """
         Cleanup logic when the bot disconnects.
