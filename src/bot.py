@@ -160,7 +160,20 @@ class RubiksBot(commands.Bot):
         Cleanup logic when the bot disconnects.
         """
         self.db_manager.close()
-        await self.session.close()
+
+    async def close(self) -> None:
+        """
+        Bot shutdown hook. Closes the shared aiohttp session, then defers
+        to the base class to tear down the gateway connection.
+
+        Input:
+            None
+        Output:
+            None
+        """
+        if self.session is not None and not self.session.closed:
+            await self.session.close()
+        await super().close()
 
     @tasks.loop(minutes=5)
     async def keep_database_alive(self) -> None:
