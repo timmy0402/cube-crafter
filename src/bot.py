@@ -10,6 +10,7 @@ import datetime
 import asyncio
 import itertools
 import zoneinfo
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +28,12 @@ class RubiksBot(commands.Bot):
         intents.guilds = True
         self.status_index = 0
         self.server_count = 0
+        self.session = None
         super().__init__(command_prefix="/", intents=intents)
 
         # Persistent database manager shared across the bot
         self.db_manager = DatabaseManager()
+
 
     async def setup_hook(self) -> None:
         """
@@ -54,6 +57,8 @@ class RubiksBot(commands.Bot):
             MetaCommands,
         ):
             await self.add_cog(cog_cls(self))
+        # set up ClientSessions
+        self.session = aiohttp.ClientSession()
         # Sync application commands with Discord
         if os.getenv("ENV", "").upper() == "PROD":
             await self.tree.sync()
@@ -155,6 +160,7 @@ class RubiksBot(commands.Bot):
         Cleanup logic when the bot disconnects.
         """
         self.db_manager.close()
+        await self.session.close()
 
     @tasks.loop(minutes=5)
     async def keep_database_alive(self) -> None:
@@ -189,18 +195,19 @@ class RubiksBot(commands.Bot):
         url = "https://discord.com/api/v10/users/@me/guilds?limit=200"
 
         token = os.getenv("TOKEN")
-        payload = {}
+        
         headers = {
-        'Authorization': f'Bot {token}',
+            'Authorization': f'Bot {token}',
         }
 
-        response = requests.request("GET", url, headers=headers, data=payload)
-        if response.status_code == 200:
-            guilds = response.json()
-            logger.info(f"Retrieved {len(guilds)} guilds from Discord API")
-            self.server_count = len(guilds)
-        else:
-            logger.error(f"Failed to get guilds: {response.status_code} - {response.text}")
+        async with self.session.get(url, headers=headers) as response:
+            if response.status == 200:
+                guilds = await response.json()
+                logger.info(f"Retrieved {len(guilds)} guilds from Discord API")
+                self.server_count = len(guilds)
+            else:
+                error_text = await response.text()
+                logger.error(f"Failed to get guilds: {response.status} - {error_text}")
         return self.server_count
     
     
@@ -209,33 +216,34 @@ class RubiksBot(commands.Bot):
         """
         Post bot stats to Top.gg (Production only).
         """
-        if os.getenv("ENV", "").upper() != "PROD":
-            return
-        servers = self.server_count if self.server_count > 0 else await self.get_servers_count()
+
+        servers = int(self.server_count if self.server_count > 0 else await self.get_servers_count())
         id = os.getenv("APPLICATION_ID")
         token = os.getenv("TOPGG_TOKEN")
         url = f"https://top.gg/api/bots/{id}/stats"
-        payload = json.dumps({"server_count": servers})
-        headers = {"Authorization": token, "Content-Type": "application/json"}
+        payload = {"server_count": servers}
+        headers = {"Authorization": token}
 
         try:
-            response = requests.request("POST", url, headers=headers, data=payload,)
-            if response.status_code == 200:
-                logger.info(f"Posted server count ({servers}) to Top.gg")
-            else:
-                logger.error(
-                    f"Failed to post to Top.gg: {response.status_code} - {response.text}"
-                )
+            async with self.session.post(url=url, json=payload, headers=headers) as response:
+                if response.status == 200:
+                    logger.info(f"Posted server count ({servers}) to Top.gg")
+                else:
+                    logger.error(
+                        f"Failed to post to Top.gg: {response.status} - {await response.text()}"
+                    )
         except Exception as e:
             logger.error(f"Error posting to Top.gg: {e}")
+    @update_topgg.before_loop
+    async def before_update_topgg(self):
+        await self.wait_until_ready()
+
 
     @tasks.loop(minutes=60)
     async def update_discordbotlist(self) -> None:
         """
         Post bot stats to DiscordBotList (Production only).
         """
-        if os.getenv("ENV", "").upper() != "PROD":
-            return
         servers = self.server_count if self.server_count > 0 else await self.get_servers_count()
         id = os.getenv("APPLICATION_ID")
         token = os.getenv("BOTLIST_TOKEN")
@@ -244,15 +252,18 @@ class RubiksBot(commands.Bot):
         headers = {"Authorization": token}
 
         try:
-            response = requests.post(url, json=params, headers=headers)
-            if response.status_code == 200 or response.status_code == 204:
-                logger.info(f"Posted server count ({servers}) to DBL")
-            else:
-                logger.error(
-                    f"Failed to post to DBL: {response.status_code} - {response.text}"
-                )
+            async with self.session.post(url=url, json=params, headers=headers) as response:
+                if response.status == 200:
+                    logger.info(f"Posted server count ({servers}) to DBL")
+                else:
+                    logger.error(
+                        f"Failed to post to DBL: {response.status} - {await response.text()}"
+                    )
         except Exception as e:
             logger.error(f"Error posting to DBL: {e}")
+    @update_discordbotlist.before_loop
+    async def before_update_discordbotlist(self):
+        await self.wait_until_ready()
     
     async def check_and_generate_daily_scramble(self) -> None:
         """
