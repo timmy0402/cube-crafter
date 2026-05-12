@@ -40,7 +40,7 @@ class SolveCommands(commands.Cog):
             puzzle = arg
 
         await interaction.response.defer()
-        log_command_usage(self.bot.db_manager, "stopwatch")
+        await log_command_usage(self.bot.db_manager, "stopwatch")
 
         try:
             view = TimerView(
@@ -73,24 +73,22 @@ class SolveCommands(commands.Cog):
         Fetches the last 15 solves from the database and calculates Ao5/Ao12.
         """
         await interaction.response.defer(thinking=True)
-        log_command_usage(self.bot.db_manager, "time")
+        await log_command_usage(self.bot.db_manager, "time")
 
         try:
             user_id = interaction.user.id
             user = await self.bot.fetch_user(user_id)
 
-            db_id = get_db_user_id(self.bot.db_manager, user_id)
+            db_id = await get_db_user_id(self.bot.db_manager, user_id)
 
             if not db_id:
                 await interaction.followup.send("You haven't recorded any solves yet!")
                 return
 
-            # Fetch last 15 solves for the specific puzzle
-            self.bot.db_manager.cursor.execute(
+            rows = await self.bot.db_manager.fetchall(
                 "SELECT TOP 15 TimeID, SolveTime, SolveStatus FROM SolveTimes WHERE UserID=? AND PuzzleType=? ORDER BY TimeID DESC",
-                (db_id, puzzle)
+                (db_id, puzzle),
             )
-            rows = self.bot.db_manager.cursor.fetchall()
 
             if not rows:
                 await interaction.followup.send(f"No solve history found for **{puzzle}**.")
@@ -152,19 +150,19 @@ class SolveCommands(commands.Cog):
         Fetches the user's personal best single, Ao5, and Ao12 for the specified puzzle.
         """
         await interaction.response.defer(thinking=True)
-        log_command_usage(self.bot.db_manager, "personal_bests")
+        await log_command_usage(self.bot.db_manager, "personal_bests")
 
         try:
             user_id = interaction.user.id
             user = await self.bot.fetch_user(user_id)
 
-            db_id = get_db_user_id(self.bot.db_manager, user_id)
+            db_id = await get_db_user_id(self.bot.db_manager, user_id)
 
             if not db_id:
                 await interaction.followup.send("You haven't recorded any solves yet!")
                 return
 
-            pb_data = get_user_pbs(self.bot.db_manager, db_id, puzzle)
+            pb_data = await get_user_pbs(self.bot.db_manager, db_id, puzzle)
 
             if pb_data["BestSingle"] is None and pb_data["BestAo5"] is None and pb_data["BestAo12"] is None:
                 await interaction.followup.send(f"No personal bests found for **{puzzle}**.")
@@ -190,35 +188,38 @@ class SolveCommands(commands.Cog):
         Deletes a specific solve time from the user's history.
         """
         await interaction.response.defer(thinking=True)
-        log_command_usage(self.bot.db_manager, "delete_time")
+        await log_command_usage(self.bot.db_manager, "delete_time")
 
         try:
             user_id = interaction.user.id
-            db_id = get_db_user_id(self.bot.db_manager, user_id)
+            db_id = await get_db_user_id(self.bot.db_manager, user_id)
 
             if not db_id:
                 await interaction.followup.send("History not found.")
                 return
 
-            # Security check: Ensure the time belongs to the user
-            self.bot.db_manager.cursor.execute(
-                "SELECT UserID FROM SolveTimes WHERE TimeID = ?", (timeid,)
+            # Security check: Ensure the time belongs to the user.
+            # PuzzleType is needed for the post-delete PB recalculation.
+            owner_row = await self.bot.db_manager.fetchone(
+                "SELECT UserID, PuzzleType FROM SolveTimes WHERE TimeID = ?", (timeid,)
             )
-            owner_id = self.bot.db_manager.cursor.fetchval()
 
-            if not owner_id:
+            if not owner_row:
                 await interaction.followup.send("Time ID not found.")
                 return
 
-            if owner_id != db_id:
+            if owner_row[0] != db_id:
                 await interaction.followup.send("You cannot delete someone else's time!")
                 return
 
-            # Perform deletion
-            self.bot.db_manager.cursor.execute(
+            puzzle_type = owner_row[1]
+
+            await self.bot.db_manager.execute(
                 "DELETE FROM SolveTimes WHERE TimeID = ?", (timeid,)
             )
-            self.bot.db_manager.cursor.commit()
+
+            # Recalculate PBs in case the deleted row was a best.
+            await recalculate_user_pbs(self.bot.db_manager, db_id, puzzle_type)
 
             await interaction.followup.send(f"Successfully deleted record `{timeid}`.")
 
@@ -241,10 +242,10 @@ class SolveCommands(commands.Cog):
           operation (str): The type of adjustment to make ("plus2" or "dnf").
         """
         await interaction.response.defer(thinking=True)
-        log_command_usage(self.bot.db_manager, "adjust_time")
+        await log_command_usage(self.bot.db_manager, "adjust_time")
         try:
             user_id = interaction.user.id
-            db_id = get_db_user_id(self.bot.db_manager, user_id)
+            db_id = await get_db_user_id(self.bot.db_manager, user_id)
             if not db_id:
                 await interaction.followup.send("History not found.")
                 return
@@ -254,11 +255,10 @@ class SolveCommands(commands.Cog):
             return
 
         try:
-            # Fetch original time and puzzle type
-            self.bot.db_manager.cursor.execute(
-                "SELECT SolveTime, PuzzleType, SolveStatus FROM SolveTimes WHERE TIMEID = ? AND UserID = ?", (timeid, db_id)
+            result = await self.bot.db_manager.fetchone(
+                "SELECT SolveTime, PuzzleType, SolveStatus FROM SolveTimes WHERE TIMEID = ? AND UserID = ?",
+                (timeid, db_id),
             )
-            result = self.bot.db_manager.cursor.fetchone()
             if not result:
                 await interaction.followup.send("Time not found or inaccessible.")
                 return
@@ -282,13 +282,12 @@ class SolveCommands(commands.Cog):
                 await interaction.followup.send("Invalid operation.")
                 return
 
-            self.bot.db_manager.cursor.execute(
-                "UPDATE SolveTimes SET SolveTime = ?, SolveStatus = ? WHERE TIMEID = ?", (new_time, status, timeid)
+            await self.bot.db_manager.execute(
+                "UPDATE SolveTimes SET SolveTime = ?, SolveStatus = ? WHERE TIMEID = ?",
+                (new_time, status, timeid),
             )
-            self.bot.db_manager.cursor.commit()
 
-            # Recalculate PBs after adjustment
-            recalculate_user_pbs(self.bot.db_manager, db_id, puzzle_type)
+            await recalculate_user_pbs(self.bot.db_manager, db_id, puzzle_type)
 
             msg = f"Successfully adjusted time `{timeid}`: "
             if operation == "plus2":

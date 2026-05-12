@@ -46,38 +46,33 @@ class TimerView(discord.ui.View):
         self.base_time = 0.0
         self.solve_status = "Completed"  # Completed, +2, DNF
 
-        # Check if the user exists in the database, if not create a new entry
-        self.db_id = self._get_or_create_user()
+        # Resolved lazily on first DB write; __init__ can't await.
+        self.db_id: int | None = None
 
-    def _get_or_create_user(self) -> int:
+    async def _get_or_create_user(self) -> int | None:
         """
         Retrieves the internal UserID from the database, creating a new user record if necessary.
 
-        Returns:
-            int: The UserID from the database.
+        Input:
+            None
+        Output:
+            int | None: The UserID from the database, or None on failure.
         """
         try:
-            # Check for existing user
-            self.db_manager.cursor.execute(
+            row = await self.db_manager.fetchone(
                 "SELECT UserID FROM Users WHERE DiscordID=?", (self.user_id,)
             )
-            db_id = self.db_manager.cursor.fetchval()
+            if row:
+                return row[0]
 
-            if not db_id:
-                # Insert new user if not found
-                self.db_manager.cursor.execute(
-                    "INSERT INTO Users(UserName, DiscordID) VALUES(?, ?)",
-                    (self.user_name, self.user_id),
-                )
-                self.db_manager.connection.commit()
-
-                # Fetch the newly created UserID
-                self.db_manager.cursor.execute(
-                    "SELECT UserID FROM Users WHERE DiscordID=?", (self.user_id,)
-                )
-                db_id = self.db_manager.cursor.fetchval()
-
-            return db_id
+            await self.db_manager.execute(
+                "INSERT INTO Users(UserName, DiscordID) VALUES(?, ?)",
+                (self.user_name, self.user_id),
+            )
+            row = await self.db_manager.fetchone(
+                "SELECT UserID FROM Users WHERE DiscordID=?", (self.user_id,)
+            )
+            return row[0] if row else None
         except Exception as e:
             logger.error(f"Error in _get_or_create_user: {e}")
             return None
@@ -244,7 +239,9 @@ class TimerView(discord.ui.View):
         if self.solve_status == "+2":
             final_time += 2
         
-        # Save the result to the database
+        # Resolve user row lazily; __init__ can't await.
+        if self.db_id is None:
+            self.db_id = await self._get_or_create_user()
         if self.db_id is None:
             logger.error("Cannot save solve time: User database ID is missing.")
             await interaction.response.send_message(
@@ -254,27 +251,20 @@ class TimerView(discord.ui.View):
             return
 
         try:
-            # Save the solve time to the database
-            self.db_manager.cursor.execute(
+            await self.db_manager.execute(
                 "INSERT INTO SolveTimes(UserID, SolveTime, PuzzleType, SolveStatus) VALUES(?, ?, ?, ?)",
                 (self.db_id, final_time, self.puzzle, self.solve_status),
             )
-            self.db_manager.connection.commit()
-            
-            # Update the user's personal best if this solve is better
-            # Note: DNF is handled by passing status-aware time or handling it in update_user_pbs logic
-            # Current update_user_pbs assumes float time. DNF usually effectively infinite.
-            # We will pass float('inf') for DNF for PB calculation
-            calc_time = final_time if self.solve_status != "DNF" else float('inf')
-            
-            is_new_pb = update_user_pbs(self.db_manager, self.db_id, self.puzzle, calc_time)
 
-            # Fetch last 15 solves for the specific puzzle to calculate averages
-            self.db_manager.cursor.execute(
+            # DNF counts as infinite for PB calculation.
+            calc_time = final_time if self.solve_status != "DNF" else float('inf')
+
+            is_new_pb = await update_user_pbs(self.db_manager, self.db_id, self.puzzle, calc_time)
+
+            rows = await self.db_manager.fetchall(
                 "SELECT TOP 15 SolveTime, SolveStatus FROM SolveTimes WHERE UserID=? AND PuzzleType=? ORDER BY SolveAt DESC, TimeID DESC",
-                (self.db_id, self.puzzle)
+                (self.db_id, self.puzzle),
             )
-            rows = self.db_manager.cursor.fetchall()
 
             raw_times = []
             for r in rows:
@@ -287,16 +277,16 @@ class TimerView(discord.ui.View):
 
             ao5 = calculate_wca_avg(raw_times, 5)
             ao12 = calculate_wca_avg(raw_times, 12)
-            
-            is_new_ao5, is_new_ao12 = update_user_average_best(self.db_manager, self.db_id, self.puzzle, ao5, ao12)
-            
-            # Saving to daily
+
+            is_new_ao5, is_new_ao12 = await update_user_average_best(
+                self.db_manager, self.db_id, self.puzzle, ao5, ao12
+            )
+
             if self.is_daily:
-                self.db_manager.cursor.execute(
-                    "INSERT INTO DailySolves (UserID, SolveTime, SolveStatus)" \
-                    "VALUES (?,?,?)",(self.db_id, final_time, self.solve_status)
+                await self.db_manager.execute(
+                    "INSERT INTO DailySolves (UserID, SolveTime, SolveStatus) VALUES (?, ?, ?)",
+                    (self.db_id, final_time, self.solve_status),
                 )
-                self.db_manager.cursor.commit()
 
         except Exception as e:
             logger.error(f"Error saving solve time to database: {e}")

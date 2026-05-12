@@ -45,7 +45,7 @@ COMMON_TIMEZONES: list[tuple[str, str]] = [
 OTHER_TZ_VALUE = "__other__"
 
 
-def upsert_reminder(
+async def upsert_reminder(
     db_manager: DatabaseManager,
     discord_id: int,
     user_name: str,
@@ -59,7 +59,7 @@ def upsert_reminder(
     DailyReminders row, resetting LastSentDate so a new time can fire today.
 
     Input:
-        db_manager (DatabaseManager): Shared singleton database manager.
+        db_manager (DatabaseManager): Shared async database manager.
         discord_id (int): Discord user ID.
         user_name (str): Discord username (used only when creating the user row).
         reminder_time (str): Validated 'HH:MM' 24-hour string.
@@ -67,38 +67,35 @@ def upsert_reminder(
     Output:
         None
     """
-    db_manager.cursor.execute(
+    row = await db_manager.fetchone(
         "SELECT UserID FROM Users WHERE DiscordID=?", (discord_id,)
     )
-    db_id = db_manager.cursor.fetchval()
+    db_id = row[0] if row else None
     if not db_id:
-        db_manager.cursor.execute(
+        await db_manager.execute(
             "INSERT INTO Users(UserName, DiscordID) VALUES(?, ?)",
             (user_name, discord_id),
         )
-        db_manager.connection.commit()
-        db_manager.cursor.execute(
+        row = await db_manager.fetchone(
             "SELECT UserID FROM Users WHERE DiscordID=?", (discord_id,)
         )
-        db_id = db_manager.cursor.fetchval()
+        db_id = row[0] if row else None
 
-    db_manager.cursor.execute(
+    exists = await db_manager.fetchone(
         "SELECT 1 FROM DailyReminders WHERE UserID=?", (db_id,)
     )
-    exists = db_manager.cursor.fetchone()
     if exists:
-        db_manager.cursor.execute(
+        await db_manager.execute(
             "UPDATE DailyReminders SET ReminderTime=?, Timezone=?, IsActive=1, "
             "LastSentDate=NULL, UpdatedAt=GETUTCDATE() WHERE UserID=?",
             (reminder_time, timezone, db_id),
         )
     else:
-        db_manager.cursor.execute(
+        await db_manager.execute(
             "INSERT INTO DailyReminders(UserID, ReminderTime, Timezone) "
             "VALUES(?, ?, ?)",
             (db_id, reminder_time, timezone),
         )
-    db_manager.connection.commit()
 
 
 async def _save_and_confirm(
@@ -136,7 +133,7 @@ async def _save_and_confirm(
         return
 
     try:
-        upsert_reminder(
+        await upsert_reminder(
             db_manager=bot.db_manager,
             discord_id=interaction.user.id,
             user_name=interaction.user.name,

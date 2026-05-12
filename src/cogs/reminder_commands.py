@@ -39,7 +39,7 @@ class ReminderCommands(commands.Cog):
         Input: interaction (discord.Interaction) - The slash command interaction.
         Output: None
         """
-        log_command_usage(self.bot.db_manager, "reminder_set")
+        await log_command_usage(self.bot.db_manager, "reminder_set")
         await interaction.response.send_message(
             "Pick your timezone:",
             view=TimezoneSelectView(self.bot),
@@ -58,22 +58,31 @@ class ReminderCommands(commands.Cog):
         Output: None
         """
         await interaction.response.defer(ephemeral=True)
-        log_command_usage(self.bot.db_manager, "reminder_disable")
+        await log_command_usage(self.bot.db_manager, "reminder_disable")
         try:
-            db_id = get_db_user_id(self.bot.db_manager, interaction.user.id)
+            db_id = await get_db_user_id(self.bot.db_manager, interaction.user.id)
             if db_id is None:
                 await interaction.followup.send(
                     "You don't have a reminder set yet. Use `/reminder set` to create one.",
                     ephemeral=True,
                 )
                 return
-            self.bot.db_manager.cursor.execute(
+            # Pre-check existence so we can return the right message after the UPDATE
+            # (the async helper API doesn't expose cursor.rowcount).
+            exists = await self.bot.db_manager.fetchone(
+                "SELECT 1 FROM DailyReminders WHERE UserID=?", (db_id,)
+            )
+            if not exists:
+                await interaction.followup.send(
+                    "You don't have a reminder set yet. Use `/reminder set` to create one.",
+                    ephemeral=True,
+                )
+                return
+            await self.bot.db_manager.execute(
                 "UPDATE DailyReminders SET IsActive=0, UpdatedAt=GETUTCDATE() "
                 "WHERE UserID=?",
                 (db_id,),
             )
-            affected = self.bot.db_manager.cursor.rowcount
-            self.bot.db_manager.connection.commit()
         except Exception as e:
             logger.error(f"reminder_disable failed for {interaction.user.id}: {e}")
             await interaction.followup.send(
@@ -81,16 +90,10 @@ class ReminderCommands(commands.Cog):
                 ephemeral=True,
             )
             return
-        if affected:
-            await interaction.followup.send(
-                "Your daily reminder is now off. Use `/reminder set` to turn it back on.",
-                ephemeral=True,
-            )
-        else:
-            await interaction.followup.send(
-                "You don't have a reminder set yet. Use `/reminder set` to create one.",
-                ephemeral=True,
-            )
+        await interaction.followup.send(
+            "Your daily reminder is now off. Use `/reminder set` to turn it back on.",
+            ephemeral=True,
+        )
 
     @reminder.command(
         name="show",
@@ -104,21 +107,20 @@ class ReminderCommands(commands.Cog):
         Output: None
         """
         await interaction.response.defer(ephemeral=True)
-        log_command_usage(self.bot.db_manager, "reminder_show")
+        await log_command_usage(self.bot.db_manager, "reminder_show")
         try:
-            db_id = get_db_user_id(self.bot.db_manager, interaction.user.id)
+            db_id = await get_db_user_id(self.bot.db_manager, interaction.user.id)
             if db_id is None:
                 await interaction.followup.send(
                     "No reminder set. Use `/reminder set` to create one.",
                     ephemeral=True,
                 )
                 return
-            self.bot.db_manager.cursor.execute(
+            row = await self.bot.db_manager.fetchone(
                 "SELECT ReminderTime, Timezone, IsActive "
                 "FROM DailyReminders WHERE UserID=?",
                 (db_id,),
             )
-            row = self.bot.db_manager.cursor.fetchone()
         except Exception as e:
             logger.error(f"reminder_show failed for {interaction.user.id}: {e}")
             await interaction.followup.send(

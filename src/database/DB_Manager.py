@@ -1,108 +1,146 @@
-import pyodbc
-import os
-from dotenv import load_dotenv
-import time
-from paths import SRC_DIR
+import asyncio
+import aioodbc
 import logging
 
 logger = logging.getLogger(__name__)
 
-def _odbc_escape(value: str) -> str:
-    # ODBC quotes values containing ;=space with {...}; any } inside must be doubled.
-    return "{" + value.replace("}", "}}") + "}"
-
-# Load database environment variables from .env file
-load_dotenv(SRC_DIR / ".env")
-if(os.getenv("ENV", "").upper() == "PROD"):
-    logger.info("Running in production environment. Loading production database credentials.")
-    server = os.getenv("AZURE_SQL_HOST")
-    database = os.getenv("AZURE_SQL_DATABASE")
-    username = os.getenv("AZURE_SQL_USERNAME")
-    password = _odbc_escape(os.getenv("AZURE_SQL_PASSWORD"))
-    driver = "{ODBC Driver 18 for SQL Server}"
-    trust = "no"
-else:
-    logger.info("Running in development environment. Loading development database credentials.")
-    server = os.getenv("DEV_SQL_HOST")
-    database = os.getenv("DEV_SQL_DATABASE")
-    username = os.getenv("DEV_SQL_USERNAME")
-    password = _odbc_escape(os.getenv("DEV_SQL_PASSWORD"))
-    driver = "{ODBC Driver 18 for SQL Server}"
-    trust = "yes"
 
 class DatabaseManager:
     """
-    Manages connections and operations for the Azure SQL Database.
-    Handles connection lifecycle, reconnection logic, and keep-alive tasks.
+    Manages the async connection pool for the Azure SQL Database.
+    Handles pool lifecycle, reconnection logic, and keep-alive ticks.
     """
 
-    def __init__(self) -> None:
-        self.connection = None
-        self.cursor = None
-
-    def connect(self) -> None:
+    def __init__(self, dsn: str) -> None:
         """
-        Establishes a connection to the Azure SQL Database.
-        Includes retry logic and checks for existing active connections.
-        """
-        # Check if we already have an active connection
-        if self.connection and self.cursor:
-            try:
-                self.cursor.execute("SELECT 1")
-                return
-            except pyodbc.Error:
-                logger.info("Connection lost, reconnecting...")
-                self.close()
+        Initialize the manager with a DSN; the pool is created lazily by connect().
 
-        max_attempts = 3  # Maximum number of reconnection attempts
+        Input:
+            dsn (str): ODBC connection string used by aioodbc.create_pool.
+        Output:
+            None
+        """
+        self._dsn = dsn
+        self._pool: aioodbc.Pool | None = None
+
+    async def connect(self) -> None:
+        """
+        Create the aioodbc connection pool with retry/backoff.
+
+        No-op if a pool already exists (prevents leaking pools when called
+        from both on_ready/setup_hook and the keep-alive recovery path).
+
+        Input:
+            None
+        Output:
+            None
+        Raises:
+            RuntimeError: when all retry attempts have been exhausted.
+        """
+        # Guard against double-init from concurrent call sites (on_ready
+        # re-fires on resume, keep_alive calls us on recovery).
+        if self._pool is not None:
+            return
+
+        max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                # Construct connection string and connect
-                self.connection = pyodbc.connect(
-                    f"DRIVER={driver};SERVER=tcp:{server};PORT=1433;DATABASE={database};UID={username};PWD={password};Encrypt=yes;TrustServerCertificate={trust};Connection Timeout=60;"
+                self._pool = await aioodbc.create_pool(
+                    dsn=self._dsn, minsize=2, maxsize=10
                 )
-                self.cursor = self.connection.cursor()
                 logger.info("DB connected successfully")
                 return
-            except pyodbc.Error as e:
+            except Exception as e:
                 logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
                 if attempt < max_attempts - 1:
                     logger.info("Waiting for 5 seconds before retrying...")
-                    time.sleep(5)
+                    await asyncio.sleep(5)
+        raise RuntimeError("Unable to connect to DB after 3 attempts")
 
-        if self.connection is None:
-            logger.error("Failed to connect to database after multiple attempts.")
-            raise Exception("Unable to connect to the database.")
+    async def close(self) -> None:
+        """
+        Close the connection pool and release all underlying connections.
 
-    def close(self) -> None:
+        Input:
+            None
+        Output:
+            None
         """
-        Safely closes the database cursor and connection.
+        if self._pool:
+            try:
+                self._pool.close()
+                await self._pool.wait_closed()
+                logger.info("DB connection closed")
+            except Exception as e:
+                logger.error(f"Error closing database connection: {e}")
+            finally:
+                self._pool = None
+
+    async def fetchone(self, query: str, params: tuple = ()) -> tuple | None:
         """
+        Run a SELECT and return a single row, or None if no row matched.
+
+        Input:
+            query (str): Parameterized SQL statement.
+            params (tuple): Positional bind parameters for the statement.
+        Output:
+            tuple | None: The first row, or None.
+        """
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                return await cur.fetchone()
+
+    async def fetchall(self, query: str, params: tuple = ()) -> list[tuple]:
+        """
+        Run a SELECT and return all matching rows.
+
+        Input:
+            query (str): Parameterized SQL statement.
+            params (tuple): Positional bind parameters for the statement.
+        Output:
+            list[tuple]: Every row returned by the query (empty list if none).
+        """
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                return await cur.fetchall()
+
+    async def execute(self, query: str, params: tuple = ()) -> None:
+        """
+        Run an INSERT/UPDATE/DELETE and commit on success.
+
+        Input:
+            query (str): Parameterized SQL statement.
+            params (tuple): Positional bind parameters for the statement.
+        Output:
+            None
+        """
+        async with self._pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                await cur.commit()
+
+    async def keep_alive(self) -> None:
+        """
+        Run a lightweight SELECT 1 to keep an idle Azure SQL connection warm.
+
+        Reconnects automatically if the pool is missing or the probe fails.
+
+        Input:
+            None
+        Output:
+            None
+        """
+        if not self._pool:
+            logger.warning("No active pool found. Attempting to reconnect.")
+            await self.connect()
         try:
-            if self.cursor:
-                self.cursor.close()
-            if self.connection:
-                self.connection.close()
-            logger.info("DB connection closed")
-        except pyodbc.Error as e:
-            logger.error(f"Error closing database connection: {e}")
-        finally:
-            self.cursor = None
-            self.connection = None
-
-    def keep_alive(self) -> None:
-        """
-        Executes a lightweight query to keep the database connection alive.
-        Prevents Azure SQL from timing out idle connections.
-        """
-        if not self.cursor:
-            logger.warning("No active cursor found. Attempting to reconnect.")
-            self.connect()
-        try:
-            self.cursor.execute("SELECT 1")
-            self.cursor.fetchall()
+            await self.fetchone("SELECT 1")
             logger.debug("Keep-alive query executed successfully.")
-        except pyodbc.Error as e:
+        except Exception as e:
             logger.error(f"Error during keep-alive query: {e}")
-            # Reconnect if the connection was lost
-            self.connect()
+            # Reconnect if the connection was lost. Drop the stale pool first
+            # so the connect() guard doesn't short-circuit.
+            await self.close()
+            await self.connect()

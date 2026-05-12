@@ -1,4 +1,5 @@
 .env
+.vscode/
 __pycache__/
 *.pdf
 testCommand.txt

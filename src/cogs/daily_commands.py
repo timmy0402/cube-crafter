@@ -30,7 +30,7 @@ class DailyCommands(commands.Cog):
         Begin users daily sessions with timer and auto record to DailySolves table
         """
         await interaction.response.defer(ephemeral=True)
-        log_command_usage(self.bot.db_manager, "daily")
+        await log_command_usage(self.bot.db_manager, "daily")
         # Fetch Daily Scramble
         curr_date = datetime.datetime.now(datetime.timezone.utc).date()
         # Check if user already did their daily
@@ -38,12 +38,12 @@ class DailyCommands(commands.Cog):
             user_id = interaction.user.id
             user = await self.bot.fetch_user(user_id)
 
-            db_id = get_db_user_id(self.bot.db_manager, user_id)
+            db_id = await get_db_user_id(self.bot.db_manager, user_id)
 
-            self.bot.db_manager.cursor.execute(
-                "SELECT SolveTime, SolveStatus FROM DailySolves WHERE UserID=? AND SolveDate=?", (db_id,curr_date)
+            result = await self.bot.db_manager.fetchone(
+                "SELECT SolveTime, SolveStatus FROM DailySolves WHERE UserID=? AND SolveDate=?",
+                (db_id, curr_date),
             )
-            result = self.bot.db_manager.cursor.fetchone()
             if result:
                 await interaction.followup.send(f"You already did your daily, your time is {result[0]} ({result[1]}). Come back tommorrow please ☺️")
                 return
@@ -53,10 +53,10 @@ class DailyCommands(commands.Cog):
             return
         # fetching daily scramble
         try:
-            self.bot.db_manager.cursor.execute(
-                "SELECT ScrambleText, ImageString, PuzzleType FROM DailyScramble WHERE ScrambleDate = ?", (curr_date)
+            response = await self.bot.db_manager.fetchone(
+                "SELECT ScrambleText, ImageString, PuzzleType FROM DailyScramble WHERE ScrambleDate = ?",
+                (curr_date,),
             )
-            response = self.bot.db_manager.cursor.fetchone()
             if not response:
                 await interaction.followup.send("Daily scramble not generated yet. Come back latter")
                 return
@@ -135,8 +135,7 @@ class DailyCommands(commands.Cog):
         try:
             placeholders = ",".join("?" * len(member_ids))
             query = f"SELECT UserID, UserName FROM Users WHERE DiscordID IN ({placeholders})"
-            self.bot.db_manager.cursor.execute(query, *member_ids)
-            results = self.bot.db_manager.cursor.fetchall()
+            results = await self.bot.db_manager.fetchall(query, tuple(member_ids))
 
             if not results:
                 await interaction.followup.send("No users in this server have registered with the bot.")
@@ -178,8 +177,7 @@ class DailyCommands(commands.Cog):
             params = list(user_ids)
             params.append(curr_date)
 
-            self.bot.db_manager.cursor.execute(query, *params)
-            results = self.bot.db_manager.cursor.fetchall()
+            results = await self.bot.db_manager.fetchall(query, tuple(params))
 
             if not results:
                 await interaction.followup.send("No daily solves found for today.")

@@ -49,7 +49,7 @@ class ScrambleCommands(commands.Cog):
             await interaction.response.defer()
 
             # Log command usage
-            log_command_usage(self.bot.db_manager, "sessions")
+            await log_command_usage(self.bot.db_manager, "sessions")
 
             # Per-puzzle cap: bigger cubes => longer scrambles => fewer fit per message
             max_count = SESSIONS_MAX_COUNT[puzzle]
@@ -89,7 +89,7 @@ class ScrambleCommands(commands.Cog):
             await interaction.response.defer()
 
             # Log command usage
-            log_command_usage(self.bot.db_manager, "scramble")
+            await log_command_usage(self.bot.db_manager, "scramble")
 
             # Call external Scrambler API
             url = "https://scrambler-api-apim.azure-api.net/scrambler-api/GetScramble"

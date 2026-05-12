@@ -31,7 +31,7 @@ class MetaCommands(commands.Cog):
         Displays a list of all commands and their descriptions.
         """
         await interaction.response.defer()
-        log_command_usage(self.bot.db_manager, "help")
+        await log_command_usage(self.bot.db_manager, "help")
 
         embed = discord.Embed(
             title="Cube Crafter Help",
@@ -58,7 +58,7 @@ class MetaCommands(commands.Cog):
         Provides an invite link for users to add the bot to their own servers.
         """
         await interaction.response.defer()
-        log_command_usage(self.bot.db_manager, "invite")
+        await log_command_usage(self.bot.db_manager, "invite")
 
         client_id = os.getenv("APPLICATION_ID")
         invite_url = f"https://discord.com/oauth2/authorize?client_id={client_id}"

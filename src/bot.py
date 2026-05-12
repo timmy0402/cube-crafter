@@ -21,7 +21,7 @@ class RubiksBot(commands.Bot):
     Handles initialization, database management, and background tasks.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db_manager: DatabaseManager) -> None:
         intents = discord.Intents.default()
         intents.message_content = False
         intents.members = True
@@ -32,7 +32,7 @@ class RubiksBot(commands.Bot):
         super().__init__(command_prefix="/", intents=intents)
 
         # Persistent database manager shared across the bot
-        self.db_manager = DatabaseManager()
+        self.db_manager = db_manager
 
 
     async def setup_hook(self) -> None:
@@ -72,6 +72,11 @@ class RubiksBot(commands.Bot):
                 logger.info(f"Commands synced with development guild: {guild_id}")
             else:
                 logger.warning("GUILD_ID not found in environment. Skipping guild sync.")
+                
+        try:
+            await self.db_manager.connect()
+        except Exception as e:
+            logger.error(f"Failed to initialize database connection: {e}")
 
         # Start background tasks for database health and stats reporting
         if not self.keep_database_alive.is_running():
@@ -107,11 +112,8 @@ class RubiksBot(commands.Bot):
             logger.info("Starting roatate statuses")
             self.rotate_status.start()
         # Initialize the shared database connection
-        try:
-            self.db_manager.connect()
-            await self.check_and_generate_daily_scramble()
-        except Exception as e:
-            logger.error(f"Failed to initialize database connection: {e}")
+        await self.check_and_generate_daily_scramble()
+        
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """
@@ -155,12 +157,6 @@ class RubiksBot(commands.Bot):
             logger.warning(f"Welcome send failed for guild {guild.id}: {e}")
 
 
-    async def on_disconnect(self) -> None:
-        """
-        Cleanup logic when the bot disconnects.
-        """
-        self.db_manager.close()
-
     async def close(self) -> None:
         """
         Bot shutdown hook. Closes the shared aiohttp session, then defers
@@ -173,6 +169,8 @@ class RubiksBot(commands.Bot):
         """
         if self.session is not None and not self.session.closed:
             await self.session.close()
+        if self.db_manager is not None:
+            await self.db_manager.close()
         await super().close()
 
     @tasks.loop(minutes=5)
@@ -181,7 +179,7 @@ class RubiksBot(commands.Bot):
         Background task to prevent Azure SQL from going idle.
         """
         logger.debug("Executing keep-alive query...")
-        self.db_manager.keep_alive()
+        await self.db_manager.keep_alive()
     
     @tasks.loop(minutes=15)
     async def rotate_status(self) -> None:
@@ -286,10 +284,10 @@ class RubiksBot(commands.Bot):
         today = datetime.datetime.now(datetime.timezone.utc).date()
         try:
             # Check if scramble exists
-            self.db_manager.cursor.execute(
+            existing = await self.db_manager.fetchone(
                 "SELECT 1 FROM DailyScramble WHERE ScrambleDate = ?", (today,)
             )
-            if self.db_manager.cursor.fetchone():
+            if existing:
                 logger.info("Daily scramble for today already exists.")
                 return
 
@@ -310,8 +308,7 @@ class RubiksBot(commands.Bot):
                 image_string = response_json["image"]
                 
                 query = "INSERT INTO DailyScramble (ScrambleText, ScrambleDate, PuzzleType, ImageString) VALUES (?, ?, ?, ?)"
-                self.db_manager.cursor.execute(query, (scramble_string, today, puzzle_display_name, image_string))
-                self.db_manager.cursor.commit()
+                await self.db_manager.execute(query, (scramble_string, today, puzzle_display_name, image_string))
                 logger.info(f"Daily scramble generated: {scramble_string}")
             else:
                 logger.error(f"Failed to generate daily scramble: {response.status_code} - {response.text}")
@@ -363,13 +360,12 @@ class RubiksBot(commands.Bot):
         """
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         try:
-            self.db_manager.cursor.execute(
+            rows = await self.db_manager.fetchall(
                 "SELECT r.ReminderID, r.UserID, u.DiscordID, r.ReminderTime, "
                 "r.Timezone, r.LastSentDate "
                 "FROM DailyReminders r JOIN Users u ON u.UserID = r.UserID "
                 "WHERE r.IsActive = 1"
             )
-            rows = self.db_manager.cursor.fetchall()
         except Exception as e:
             logger.error(f"Reminder query failed: {e}")
             return
@@ -401,11 +397,9 @@ class RubiksBot(commands.Bot):
 
             # checking if user already solve the daily
             try:
-                self.db_manager.cursor.execute(
+                already_solved = await self.db_manager.fetchone(
                     "SELECT 1 FROM DailySolves WHERE UserID=? AND SolveDate=?",
-                    (db_uid, local_today),
-                )
-                already_solved = self.db_manager.cursor.fetchone()
+                    (db_uid, local_today))
             except Exception as e:
                 logger.error(f"DailySolves lookup failed for {db_uid}: {e}")
                 continue
@@ -414,12 +408,11 @@ class RubiksBot(commands.Bot):
                 await self._send_reminder_dm(discord_id)
             # set last sent
             try:
-                self.db_manager.cursor.execute(
+                await self.db_manager.execute(
                     "UPDATE DailyReminders SET LastSentDate=?, "
                     "UpdatedAt=GETUTCDATE() WHERE ReminderID=?",
                     (local_today, reminder_id),
                 )
-                self.db_manager.connection.commit()
             except Exception as e:
                 logger.error(
                     f"Failed to mark reminder {reminder_id} as sent: {e}"

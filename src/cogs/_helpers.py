@@ -6,30 +6,40 @@ from PIL import Image, ImageEnhance
 logger = logging.getLogger(__name__)
 
 
-def log_command_usage(db_manager, command_name: str) -> None:
+async def log_command_usage(db_manager, command_name: str) -> None:
     """
     Logs the usage of a specific command to the database.
+
+    Best-effort: swallows errors so a logging failure never blocks the command.
+
+    Input:
+        db_manager (DatabaseManager): Shared async database manager.
+        command_name (str): Name of the slash command being logged.
+    Output:
+        None
     """
     try:
-        db_manager.cursor.execute(
+        await db_manager.execute(
             "INSERT INTO CommandLog(CommandName) VALUES(?)", (command_name,)
         )
-        db_manager.cursor.commit()
     except Exception as e:
         logger.error(f"Log usage failed: {e}")
 
 
-def get_db_user_id(db_manager, discord_id: int) -> int | None:
+async def get_db_user_id(db_manager, discord_id: int) -> int | None:
     """
     Fetches the internal database UserID for a given Discord user ID.
 
-    Input: discord_id (int) - The Discord user's ID.
-    Output: int | None - The internal UserID, or None if not found.
+    Input:
+        db_manager (DatabaseManager): Shared async database manager.
+        discord_id (int): The Discord user's ID.
+    Output:
+        int | None: The internal UserID, or None if no row exists.
     """
-    db_manager.cursor.execute(
+    row = await db_manager.fetchone(
         "SELECT UserID FROM Users WHERE DiscordID = ?", (discord_id,)
     )
-    return db_manager.cursor.fetchval()
+    return row[0] if row else None
 
 
 def process_scramble_image(b64_string: str) -> io.BytesIO:

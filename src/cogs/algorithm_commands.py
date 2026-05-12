@@ -63,7 +63,7 @@ class AlgorithmCommands(commands.Cog):
         Displays OLL algorithms in an interactive paginated view.
         """
         await interaction.response.defer()
-        log_command_usage(self.bot.db_manager, "oll")
+        await log_command_usage(self.bot.db_manager, "oll")
 
         algo_view = AlgorithmsView(
             mode="oll",
@@ -100,7 +100,7 @@ class AlgorithmCommands(commands.Cog):
         Displays PLL algorithms in an interactive paginated view.
         """
         await interaction.response.defer()
-        log_command_usage(self.bot.db_manager, "pll")
+        await log_command_usage(self.bot.db_manager, "pll")
 
         algo_view = AlgorithmsView(
             mode="pll",
