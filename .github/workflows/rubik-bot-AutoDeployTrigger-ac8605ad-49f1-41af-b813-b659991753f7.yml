@@ -38,8 +38,9 @@ jobs:
           AZURE_STORAGE_CONTAINER_NAME: ""
           APPLICATION_ID: "000000000000000000"
         run: pytest test/ -v
-        
+
   build-and-deploy:
+    needs: test
     runs-on: ubuntu-latest
     permissions: 
       id-token: write #This is required for requesting the OIDC JWT Token
@@ -47,7 +48,7 @@ jobs:
 
     steps:
       - name: Checkout to the branch
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Azure Login
         uses: azure/login@v2
@@ -60,15 +61,11 @@ jobs:
         uses: azure/container-apps-deploy-action@v2
         with:
           appSourcePath: ${{ github.workspace }}
-          _dockerfilePathKey_: _dockerfilePath_
-          _targetLabelKey_: _targetLabel_
           registryUrl: docker.io
           registryUsername: ${{ secrets.RUBIKBOT_REGISTRY_USERNAME }}
           registryPassword: ${{ secrets.RUBIKBOT_REGISTRY_PASSWORD }}
           containerAppName: rubik-bot
           resourceGroup: rubik_bot
           imageToBuild: timhmn/cube-crafter:${{ github.sha }}
-          _buildArgumentsKey_: |
-            _buildArgumentsValues_
 
 
