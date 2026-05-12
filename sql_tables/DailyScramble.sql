@@ -4,4 +4,8 @@ CREATE TABLE DailyScramble(
     ScrambleDate DATE NOT NULL,
     PuzzleType NVARCHAR(20) NOT NULL,
     ImageString NVARCHAR(MAX) NOT NULL
-)
+);
+
+CREATE NONCLUSTERED INDEX IX_DailyScramble_ScrambleDate
+    ON DailyScramble (ScrambleDate)
+    INCLUDE (ScrambleText, ImageString, PuzzleType);
