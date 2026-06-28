@@ -280,16 +280,14 @@ class AlgorithmsView(discord.ui.View):
         Updates the enabled/disabled state of the Back and Next buttons based on current page.
         """
         # Let's dynamically find them to be safe
-        back_button = [
-            x
-            for x in self.children
-            if isinstance(x, discord.ui.Button) and x.label == "Back"
-        ][0]
-        next_button = [
-            x
-            for x in self.children
-            if isinstance(x, discord.ui.Button) and x.label == "Next"
-        ][0]
+        back_button = None
+        next_button = None
+        for x in self.children:
+            if isinstance(x, discord.ui.Button):
+                if x.label == "Back":
+                    back_button = x
+                elif x.label == "Next":
+                    next_button = x
 
         if not self.algorithms_list:
             back_button.disabled = True

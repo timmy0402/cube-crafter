@@ -228,7 +228,7 @@ class RubiksBot(commands.Bot):
         Post bot stats to Top.gg (Production only).
         """
 
-        servers = int(self.server_count if self.server_count > 0 else await self.get_servers_count())
+        servers = self.server_count if self.server_count > 0 else await self.get_servers_count()
         id = os.getenv("APPLICATION_ID")
         token = os.getenv("TOPGG_TOKEN")
         url = f"https://top.gg/api/bots/{id}/stats"

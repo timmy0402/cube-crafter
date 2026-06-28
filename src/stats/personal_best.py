@@ -59,17 +59,18 @@ def calculate_wca_avg(times: list[float], count: int) -> float | None:
     if len(times) < count:
         return None
 
-    window = times[:count]
+    if len(times) != count:
+        times = times[:count]
 
-    dnf_count = sum(1 for t in window if t == float('inf'))
+    dnf_count = times.count(float('inf'))
 
     if dnf_count > 1:
         return float('inf')
 
-    subset = sorted(window)
-    # Remove best (first) and worst (last)
-    trimmed = subset[1:-1]
-    return sum(trimmed) / len(trimmed)
+    total = sum(times)
+    total -= min(times)
+    total -= max(times)
+    return total / (count - 2)
 
 
 async def update_user_average_best(

@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import aiohttp
 import logging
 from typing import TYPE_CHECKING
 
@@ -63,14 +62,13 @@ class ScrambleCommands(commands.Cog):
             url = "https://scrambler-api-apim.azure-api.net/scrambler-api/GetRelay"
             params = {"puzzle": puzzle, "count": count}
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    if response.status != 200:
-                        await interaction.followup.send("Failed to retrieve scramble. Please try again later.")
-                        logger.error(f"Scrambler API error: {response.status} - {await response.text()}")
-                        return
+            async with self.bot.session.get(url, params=params) as response:
+                if response.status != 200:
+                    await interaction.followup.send("Failed to retrieve scramble. Please try again later.")
+                    logger.error(f"Scrambler API error: {response.status} - {await response.text()}")
+                    return
 
-                    response_json = await response.json()
+                response_json = await response.json()
             scrambles = "\n\n".join(response_json['scrambles'])
             await interaction.followup.send(scrambles)
 
@@ -95,14 +93,13 @@ class ScrambleCommands(commands.Cog):
             url = "https://scrambler-api-apim.azure-api.net/scrambler-api/GetScramble"
             params = {"puzzle": puzzle}
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as response:
-                    if response.status != 200:
-                        await interaction.followup.send("Failed to retrieve scramble. Please try again later.")
-                        logger.error(f"Scrambler API error: {response.status} - {await response.text()}")
-                        return
+            async with self.bot.session.get(url, params=params) as response:
+                if response.status != 200:
+                    await interaction.followup.send("Failed to retrieve scramble. Please try again later.")
+                    logger.error(f"Scrambler API error: {response.status} - {await response.text()}")
+                    return
 
-                    response_json = await response.json()
+                response_json = await response.json()
 
             scramble_string = response_json["scramble"]
             svg_string = response_json["image"]

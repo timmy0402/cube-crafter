@@ -185,18 +185,11 @@ class DailyCommands(commands.Cog):
 
             name_str = "\n".join([str(userid_to_username[row[0]]) for row in results])
 
-            raw_times = []
             formatted_times_list = []
 
             for row in results:
                 t_val = float(row[1])
                 status = row[2] if row[2] else ""
-
-                # For calculation
-                if status == 'DNF':
-                    raw_times.append(float('inf'))
-                else:
-                    raw_times.append(t_val)
 
                 # For display
                 display_str = f"{t_val:.02f}s"
