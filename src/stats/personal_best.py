@@ -67,9 +67,14 @@ def calculate_wca_avg(times: list[float], count: int) -> float | None:
     if dnf_count > 1:
         return float('inf')
 
-    total = sum(times)
-    total -= min(times)
-    total -= max(times)
+    if dnf_count == 0:
+        total = sum(times)
+        total -= min(times)
+        total -= max(times)
+        return total / (count - 2)
+
+    valid = [t for t in times if t != float('inf')]
+    total = sum(valid) - min(valid)
     return total / (count - 2)
 
 
