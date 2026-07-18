@@ -4,12 +4,15 @@ from discord import app_commands
 import logging
 from typing import TYPE_CHECKING
 
+from views.timer import TimerView
+
 if TYPE_CHECKING:
     from bot import RubiksBot
 
 from cogs._constants import (
-    SCRAMBLE_API_CHOICES,
+    PUZZLE_CHOICES,
     SCRAMBLE_API_NXN_CHOICES,
+    SCRAMBLE_API_MAP,
     SESSIONS_ABS_MAX,
     SESSIONS_MAX_COUNT,
 )
@@ -75,7 +78,7 @@ class ScrambleCommands(commands.Cog):
     @app_commands.command(name="scramble", description="Generate a Rubik's Cube scramble")
     @app_commands.describe(puzzle="Choose the scramble type")
     @app_commands.choices(
-        puzzle=SCRAMBLE_API_CHOICES
+        puzzle=PUZZLE_CHOICES
     )
     async def scramble(self, interaction: discord.Interaction, puzzle: str) -> None:
         """
@@ -86,12 +89,15 @@ class ScrambleCommands(commands.Cog):
         else:
             await interaction.response.defer()
 
+            user_id = interaction.user.id
+            user = await self.bot.fetch_user(user_id)
+
             # Log command usage
             await log_command_usage(self.bot.db_manager, "scramble")
 
             # Call external Scrambler API
             url = "https://scrambler-api-apim.azure-api.net/scrambler-api/GetScramble"
-            params = {"puzzle": puzzle}
+            params = {"puzzle": SCRAMBLE_API_MAP.get(puzzle)}
 
             async with self.bot.session.get(url, params=params) as response:
                 if response.status != 200:
@@ -109,8 +115,19 @@ class ScrambleCommands(commands.Cog):
             # Create Discord file and embed
             file = discord.File(fp=new_png_buffer, filename="rubiks_cube.png")
             embed = discord.Embed(
-                title=f"Your {puzzle} Scramble", description=scramble_string, color=0x0099FF
+                title=f"Your {puzzle} Scramble", 
+                description=scramble_string, 
+                color=0x0099FF
             )
             embed.set_image(url="attachment://rubiks_cube.png")
 
-            await interaction.followup.send(embed=embed, file=file)
+            view = TimerView(
+                timeout=360,
+                is_daily=True,
+                user_id=user_id,
+                userName=user.name,
+                puzzle=puzzle,
+                db_manager=self.bot.db_manager,
+            )
+
+            await interaction.followup.send(embed=embed, file=file, view=view)
