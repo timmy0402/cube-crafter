@@ -1,3 +1,10 @@
 [tool.pytest.ini_options]
 testpaths = ["test"]
 pythonpath = ["src"]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true

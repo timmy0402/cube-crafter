@@ -123,7 +123,7 @@ class ScrambleCommands(commands.Cog):
 
             view = TimerView(
                 timeout=360,
-                is_daily=True,
+                is_daily=False,
                 user_id=user_id,
                 userName=user.name,
                 puzzle=puzzle,
