@@ -23,11 +23,11 @@ SCRAMBLE_API_MAP = {
     "5x5" : "FIVE",
     "6x6" : "SIX",
     "7x7" : "SEVEN",
-    "pyraminx" : "PYRA",
-    "square1" : "SQ1",
-    "megaminx" : "MEGA",
-    "skewb" : "SKEWB",
-    "clock" : "CLOCK",
+    "PYRA" : "PYRA",
+    "SQ1" : "SQ1",
+    "MEGA" : "MEGA",
+    "SKEWB" : "SKEWB",
+    "CLOCK" : "CLOCK",
 }
 
 # Subset for /sessions: NxN only — other puzzles produce scrambles too long
