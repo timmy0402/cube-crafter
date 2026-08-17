@@ -271,8 +271,15 @@ class SolveCommands(commands.Cog):
 
             # Perform adjustment
             if operation == "plus2":
-                if curr_status == "plus2":
+                if curr_status == "+2":
                     await interaction.followup.send("Invalid operation, can't not do another +2")
+                    return
+                # A DNF already discards the result, so a +2 on top is meaningless —
+                # and allowing it would let plus2/dnf be alternated to stack penalties.
+                if curr_status == "DNF":
+                    await interaction.followup.send(
+                        "This solve is a DNF, so a +2 can't be added to it."
+                    )
                     return
                 new_time = original_time + 2  # Add 2 seconds
                 status = '+2'

@@ -1,7 +1,7 @@
 services:
   bot:
     build: .
-    container_name: cube-crafter
+    container_name: rubik-bot
     restart: unless-stopped
     env_file:
       - src/.env

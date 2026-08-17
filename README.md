@@ -17,7 +17,7 @@
 - **Personal Stopwatch:** Time your solves with an interactive stopwatch view.
 - **Solve History:** Track your progress with a database-backed history system.
 - **WCA Averages:** Automatically calculates **Average of 5 (Ao5)** and **Average of 12 (Ao12)** according to WCA standards (removing best/worst solves).
-- **Per-Puzzle Tracking:** Keeps your history organized by puzzle type with a 15-entry limit per puzzle to keep your data relevant.
+- **Per-Puzzle Tracking:** Keeps your history organized by puzzle type. Full solve history is retained; `/time` shows your 15 most recent solves.
 - **Algorithm Library:** Access OLL and PLL algorithm guides with visual aids.
 - **Daily Competition:** Compete with friends in your sever with unique daily scramble. Reminder also can be opt-in
 
@@ -81,6 +81,14 @@ sqlcmd -S localhost -d CubeCrafter -E -i sql_trigger/trg_IncreaseCommandCount.sq
 ```
 
 Or open each `.sql` file in SQL Server Management Studio and execute them against your database.
+
+> **Note on `trg_AutoDeleteOldSolveTimes`.** This trigger caps `SolveTimes` at the 15 most
+> recent rows per puzzle, and it is **disabled in production**. Its script creates it and
+> then immediately disables it, so a fresh local database matches production — that is
+> deliberate, not a bug in the script. Leave it disabled: with it on, `/delete_time` and
+> `/adjust_time` rebuild personal bests from a history that has been truncated to 15 rows,
+> silently replacing an older PB with the best of the recent 15. See the header comment in
+> the file for the full reasoning before enabling it.
 
 ### 4. Configure environment variables
 
