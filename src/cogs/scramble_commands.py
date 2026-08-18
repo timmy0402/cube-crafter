@@ -121,13 +121,25 @@ class ScrambleCommands(commands.Cog):
             )
             embed.set_image(url="attachment://rubiks_cube.png")
 
-            view = TimerView(
-                timeout=360,
-                is_daily=False,
-                user_id=user_id,
-                userName=user.name,
-                puzzle=puzzle,
-                db_manager=self.bot.db_manager,
-            )
+            try:
+                view = TimerView(
+                    timeout=360,
+                    is_daily=False,
+                    user_id=user_id,
+                    userName=user.name,
+                    puzzle=puzzle,
+                    db_manager=self.bot.db_manager,
+                )
 
-            await interaction.followup.send(embed=embed, file=file, view=view)
+                await interaction.followup.send(embed=embed, file=file, view=view)
+
+                message = await interaction.original_response()
+                view.message = message
+
+                await view.wait()
+                await view.disable_all_items()
+            except Exception as e:
+                logger.error(f"Scramble timer error: {e}")
+                await interaction.followup.send(
+                    "An error occurred with the timer. Please try again."
+                )
