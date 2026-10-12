@@ -1,6 +1,9 @@
 import asyncio
-import aioodbc
 import logging
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
+
+import aioodbc
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,8 @@ class DatabaseManager:
         """
         self._dsn = dsn
         self._pool: aioodbc.Pool | None = None
+        self._pool_lock = asyncio.Lock()
+        self._closed = False
 
     async def connect(self) -> None:
         """
@@ -35,13 +40,19 @@ class DatabaseManager:
         Output:
             None
         Raises:
-            RuntimeError: when all retry attempts have been exhausted.
+            RuntimeError: when retries are exhausted or the manager is closed.
         """
-        # Guard against double-init from concurrent call sites (on_ready
-        # re-fires on resume, keep_alive calls us on recovery).
+        async with self._pool_lock:
+            await self._connect_locked()
+
+    async def _connect_locked(self) -> None:
+        """Create a pool while holding the lifecycle lock."""
+        if self._closed:
+            raise RuntimeError("Database manager is closed")
         if self._pool is not None:
             return
 
+        logger.info("Connecting database pool")
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
@@ -51,22 +62,31 @@ class DatabaseManager:
                 logger.info("DB connected successfully")
                 return
             except Exception as e:
-                logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
+                logger.warning(
+                    "Connection attempt %s failed (%s)", attempt + 1, type(e).__name__
+                )
                 if attempt < max_attempts - 1:
                     logger.info("Waiting for 5 seconds before retrying...")
                     await asyncio.sleep(5)
+        logger.error("Database connection retries exhausted; pool remains unavailable")
         raise RuntimeError("Unable to connect to DB after 3 attempts")
 
     async def close(self) -> None:
         """
-        Close the connection pool and release all underlying connections.
+        Permanently close the manager and release all underlying connections.
 
         Input:
             None
         Output:
             None
         """
-        if self._pool:
+        async with self._pool_lock:
+            self._closed = True
+            await self._close_pool_locked()
+
+    async def _close_pool_locked(self) -> None:
+        """Drain the pool while preventing new borrowers."""
+        if self._pool is not None:
             try:
                 self._pool.close()
                 await self._pool.wait_closed()
@@ -75,6 +95,16 @@ class DatabaseManager:
                 logger.error(f"Error closing database connection: {e}")
             finally:
                 self._pool = None
+
+    @asynccontextmanager
+    async def _connection(self) -> AsyncIterator[aioodbc.Connection]:
+        """Wait for recovery, then borrow a connection without serializing queries."""
+        async with AsyncExitStack() as stack:
+            async with self._pool_lock:
+                await self._connect_locked()
+                connection = await stack.enter_async_context(self._pool.acquire())
+            # Release outside the lock so recovery can drain active queries.
+            yield connection
 
     async def fetchone(self, query: str, params: tuple = ()) -> tuple | None:
         """
@@ -86,7 +116,7 @@ class DatabaseManager:
         Output:
             tuple | None: The first row, or None.
         """
-        async with self._pool.acquire() as conn:
+        async with self._connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
                 return await cur.fetchone()
@@ -101,7 +131,7 @@ class DatabaseManager:
         Output:
             list[tuple]: Every row returned by the query (empty list if none).
         """
-        async with self._pool.acquire() as conn:
+        async with self._connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
                 return await cur.fetchall()
@@ -116,7 +146,7 @@ class DatabaseManager:
         Output:
             None
         """
-        async with self._pool.acquire() as conn:
+        async with self._connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
                 await cur.commit()
@@ -132,15 +162,19 @@ class DatabaseManager:
         Output:
             None
         """
-        if not self._pool:
-            logger.warning("No active pool found. Attempting to reconnect.")
-            await self.connect()
-        try:
-            await self.fetchone("SELECT 1")
-            logger.debug("Keep-alive query executed successfully.")
-        except Exception as e:
-            logger.error(f"Error during keep-alive query: {e}")
-            # Reconnect if the connection was lost. Drop the stale pool first
-            # so the connect() guard doesn't short-circuit.
-            await self.close()
-            await self.connect()
+        async with self._pool_lock:
+            await self._connect_locked()
+            try:
+                async with self._pool.acquire() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute("SELECT 1")
+                        await cur.fetchone()
+                logger.debug("Keep-alive query executed successfully.")
+            except Exception as e:
+                logger.warning(
+                    "Database recovery started after keep-alive failure (%s)",
+                    type(e).__name__,
+                )
+                await self._close_pool_locked()
+                await self._connect_locked()
+                logger.info("Database recovery completed")

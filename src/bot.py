@@ -159,14 +159,25 @@ class RubiksBot(commands.Bot):
 
     async def close(self) -> None:
         """
-        Bot shutdown hook. Closes the shared aiohttp session, then defers
-        to the base class to tear down the gateway connection.
+        Stop background work before closing shared services and the gateway.
 
         Input:
             None
         Output:
             None
         """
+        pending_tasks = []
+        for loop in (
+            self.keep_database_alive, self.rotate_status, self.update_topgg,
+            self.update_discordbotlist, self.get_servers_count,
+            self.daily_scramble_task, self.daily_reminder_task,
+        ):
+            task = loop.get_task()
+            loop.cancel()
+            if task is not None:
+                pending_tasks.append(task)
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
         if self.session is not None and not self.session.closed:
             await self.session.close()
         if self.db_manager is not None:
@@ -179,7 +190,21 @@ class RubiksBot(commands.Bot):
         Background task to prevent Azure SQL from going idle.
         """
         logger.debug("Executing keep-alive query...")
-        await self.db_manager.keep_alive()
+        try:
+            await self.db_manager.keep_alive()
+        except Exception as e:
+            logger.error(
+                "Database keep-alive/recovery failed (%s); will retry next cycle",
+                type(e).__name__,
+            )
+
+    @keep_database_alive.before_loop
+    async def before_keep_database_alive(self) -> None:
+        await self.wait_until_ready()
+
+    @keep_database_alive.after_loop
+    async def after_keep_database_alive(self) -> None:
+        logger.info("Database keep-alive task stopped")
     
     @tasks.loop(minutes=15)
     async def rotate_status(self) -> None:

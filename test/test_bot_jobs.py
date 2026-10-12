@@ -1,9 +1,69 @@
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
 
 from bot import RubiksBot
 from conftest import FakeDatabase
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_loop_survives_failure_and_recovers(caplog):
+    recovered = asyncio.Event()
+    calls = 0
+
+    async def keep_alive():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("Unable to connect to DB after 3 attempts")
+        recovered.set()
+
+    db = type("Database", (), {})()
+    db.keep_alive = keep_alive
+    db.close = AsyncMock()
+    bot = RubiksBot(db)
+    bot.wait_until_ready = AsyncMock()
+    bot.keep_database_alive.change_interval(seconds=0.01)
+    try:
+        bot.keep_database_alive.start()
+        await asyncio.wait_for(recovered.wait(), 2)
+        assert bot.keep_database_alive.is_running()
+        assert not bot.keep_database_alive.failed()
+        assert "will retry next cycle" in caplog.text
+    finally:
+        await bot.close()
+    db.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_database_work_before_closing_pool():
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def keep_alive():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async def close_database():
+        assert cancelled.is_set()
+
+    db = type("Database", (), {})()
+    db.keep_alive = keep_alive
+    db.close = AsyncMock(side_effect=close_database)
+    bot = RubiksBot(db)
+    bot.wait_until_ready = AsyncMock()
+    bot.keep_database_alive.start()
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+    finally:
+        await asyncio.wait_for(bot.close(), 1)
+    assert not bot.keep_database_alive.is_running()
+    assert not bot.keep_database_alive.failed()
+    db.close.assert_awaited_once()
 
 
 class DailyBot:
