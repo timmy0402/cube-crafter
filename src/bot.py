@@ -392,7 +392,10 @@ class RubiksBot(commands.Bot):
                 "WHERE r.IsActive = 1"
             )
         except Exception as e:
-            logger.error(f"Reminder query failed: {e}")
+            logger.error(
+                "Reminder query failed (%s); will retry next cycle",
+                type(e).__name__,
+            )
             return
 
         for reminder_id, db_uid, discord_id, hhmm, tz_name, last_sent in rows:

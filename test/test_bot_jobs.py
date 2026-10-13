@@ -2,6 +2,7 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
+import pyodbc
 
 from bot import RubiksBot
 from conftest import FakeDatabase
@@ -73,6 +74,26 @@ class DailyBot:
 
     async def _send_reminder_dm(self, discord_id):
         self.sent.append(discord_id)
+
+
+@pytest.mark.asyncio
+async def test_reminder_query_failure_skips_cycle_and_later_recovers(caplog):
+    db = FakeDatabase(one=[None])
+    db.fetchall = AsyncMock(side_effect=[
+        pyodbc.OperationalError("08S01", "sensitive driver detail"),
+        [(1, 7, 99, "00:00", "UTC", None)],
+    ])
+    bot = DailyBot(db)
+
+    await RubiksBot.daily_reminder_task.coro(bot)
+    assert not bot.sent
+    assert not db.calls
+    assert "will retry next cycle" in caplog.text
+    assert "sensitive driver detail" not in caplog.text
+
+    await RubiksBot.daily_reminder_task.coro(bot)
+    assert bot.sent == [99]
+    assert any(call[0] == "execute" and "LastSentDate" in call[1] for call in db.calls)
 
 
 @pytest.mark.asyncio

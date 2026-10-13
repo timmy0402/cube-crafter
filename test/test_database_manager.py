@@ -13,8 +13,25 @@ class AsyncContext:
     async def __aenter__(self):
         return self.value
 
+    def __await__(self):
+        return self.__aenter__().__await__()
+
     async def __aexit__(self, *args):
         return False
+
+
+def make_connection(cursor):
+    connection = type("Connection", (), {
+        "cursor": lambda self: AsyncContext(cursor),
+        "closed": False,
+        "autocommit": False,
+    })()
+
+    async def close():
+        connection.closed = True
+
+    connection.close = AsyncMock(side_effect=close)
+    return connection
 
 
 def make_pool(row=(1,), rows=None):
@@ -23,11 +40,14 @@ def make_pool(row=(1,), rows=None):
     cursor.fetchone = AsyncMock(return_value=row)
     cursor.fetchall = AsyncMock(return_value=rows or [row])
     cursor.commit = AsyncMock()
-    connection = type("Connection", (), {"cursor": lambda self: AsyncContext(cursor)})()
+    cursor.rollback = AsyncMock()
+    cursor.close = AsyncMock()
+    connection = make_connection(cursor)
     pool = type("Pool", (), {})()
     pool.acquire = lambda: AsyncContext(connection)
     pool.close = Mock()
     pool.wait_closed = AsyncMock()
+    pool._wakeup = AsyncMock()
     return pool, cursor
 
 
@@ -65,7 +85,7 @@ async def test_query_helpers_execute_and_commit():
     assert await manager.fetchall("SELECT all") == [(1,), (2,)]
     await manager.execute("UPDATE table", (2,))
     assert cursor.execute.await_count == 3
-    cursor.commit.assert_awaited_once()
+    assert cursor.commit.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -257,7 +277,7 @@ async def test_close_drains_borrowed_connection_without_deadlock():
     finish_query = asyncio.Event()
     released = asyncio.Event()
     closing = asyncio.Event()
-    connection = type("Connection", (), {"cursor": lambda self: AsyncContext(cursor)})()
+    connection = make_connection(cursor)
 
     class BorrowedConnection(AsyncContext):
         async def __aexit__(self, *args):
