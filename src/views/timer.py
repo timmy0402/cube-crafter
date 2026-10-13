@@ -94,7 +94,7 @@ class TimerView(discord.ui.View):
             return False
         return True
 
-    async def disable_all_items(self) -> None:
+    async def disable_all_items(self, *, content: str | None = None) -> None:
         """
         Disables all buttons in the view and updates the message if it exists.
         """
@@ -102,26 +102,44 @@ class TimerView(discord.ui.View):
             if isinstance(item, discord.ui.Button):
                 item.disabled = True
         
-        if self.message:
-            try:
+        if self.message is None:
+            return
+
+        context = (
+            getattr(self.message.guild, "id", None),
+            self.message.channel.id,
+            self.message.id,
+        )
+        try:
+            if content is None:
                 await self.message.edit(view=self)
-            except Exception as e:
-                logger.error(f"Error in disable_all_items: {e}")
+            else:
+                await self.message.edit(content=content, view=self)
+        except (discord.Forbidden, discord.NotFound) as exc:
+            logger.warning(
+                "Timer message unavailable during cleanup: guild_id=%s channel_id=%s "
+                "message_id=%s status=%s code=%s",
+                *context, exc.status, exc.code,
+            )
+        except discord.HTTPException as exc:
+            logger.error(
+                "Failed to update timer message: guild_id=%s channel_id=%s "
+                "message_id=%s status=%s code=%s",
+                *context, exc.status, exc.code,
+            )
+        except Exception:
+            logger.exception(
+                "Unexpected timer cleanup error: guild_id=%s channel_id=%s message_id=%s",
+                *context,
+            )
 
     async def on_timeout(self) -> None:
         """
-        Handles the view timeout by notifying the user and disabling buttons.
+        Disables the timer and marks its original message as timed out.
         """
-        try:
-            if self.message:
-                # Notify the user about the timeout
-                await self.message.channel.send(
-                    f"<@{self.user_id}>, your timer session has timed out.",
-                    delete_after=10
-                )
-            await self.disable_all_items()
-        except Exception as e:
-            logger.error(f"Error handling on_timeout: {e}")
+        self.stop()
+        # Editing the interaction message also keeps ephemeral timers private.
+        await self.disable_all_items(content="Your timer session has timed out.")
 
     @discord.ui.button(label="Start", style=discord.ButtonStyle.success)
     async def start_timer(

@@ -57,8 +57,6 @@ class SolveCommands(commands.Cog):
             message = await interaction.original_response()
             view.message = message
 
-            await view.wait()
-            await view.disable_all_items()
         except Exception as e:
             logger.error(f"Stopwatch error: {e}")
             await interaction.followup.send(

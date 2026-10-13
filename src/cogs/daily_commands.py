@@ -106,8 +106,6 @@ class DailyCommands(commands.Cog):
             except Exception as e:
                 logger.warning(f"Failed to send reminder opt-in followup: {e}")
 
-            await view.wait()
-            await view.disable_all_items()
         except Exception as e:
             logger.error(f"Stopwatch error: {e}")
             await interaction.followup.send(

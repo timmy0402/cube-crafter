@@ -128,6 +128,8 @@ async def test_timer_confirm_saves_plus2_daily_result_and_pb_feedback(monkeypatc
     edit = interaction.response.calls[-1]
     assert edit[0] == "edit"
     assert "New Personal Best" in edit[2]["embed"].description
+    assert view.is_finished()
+    assert not view.children
 
 
 @pytest.mark.asyncio
